@@ -1,0 +1,152 @@
+Timer unit: 1e-06 s
+
+Total time: 3.42399 s
+File: /home/johan/nf/nf-rtime/Projects_Templates/3_RTMRICWL/rtfilters.py
+Function: handle at line 593
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   593                                               def handle(self, data):
+   594                                                   
+   595                                                   
+   596                                                   # first to do timeshifting stuff --> then worry about allocation into different subregions...
+   597       482    1908335.0   3959.2     55.7          ddata, dy, dXn = self._handle_delays(data)
+   598                                                   
+   599       482       2428.0      5.0      0.1          s=self.s  # current sample
+   600       482       1158.0      2.4      0.0          N=data.shape[0]
+   601       482        957.0      2.0      0.0          nwin=self.nwin
+   602                                                   
+   603                                                   #cleaned_chs=[]
+   604                                                   # cleaned_data = self._return_delayed_data()
+   605                                                   # ipdb.set_trace()
+   606       482        857.0      1.8      0.0          cleaned = []
+   607      1446       5497.0      3.8      0.2          for i in range(len(self.taperlist)):
+   608       964      15375.0     15.9      0.4              cleaned.append(data[:,0:len(self.ichs)].copy())
+   609                                           
+   610                                           
+   611       482       1308.0      2.7      0.0          if self.DEBUG:
+   612                                                       sumcheck = []
+   613                                                       for i in range(len(self.taperlist)):
+   614                                                           sumcheck.append(data[:,0:len(self.ichs)].copy())
+   615                                                   
+   616                                           
+   617                                                   # cwls = data[:,self.icws]  # better do it here - breakdown into cwls and signals
+   618                                                   # signals = data[:,self.ichs]  # when we return data, we replace some cols from data with corrected signals
+   619                                                   
+   620                                                   # go through the list as per our notes -- only COLLECT here, and start new estimations where necessary.
+   621      1446       5368.0      3.7      0.2          for itaper, tli in enumerate(self.taperlist):
+   622                                                       
+   623       964       1530.0      1.6      0.0              finished=False
+   624       964       1476.0      1.5      0.0              cur_s = s
+   625                                                       
+   626                                                       
+   627                                                       # if itaper == 1 and tli['s'] > 9000 and cur_s > 17000:
+   628                                                       #     ipdb.set_trace()
+   629                                                       # re-do this -- figure out DATA indices, and X indices
+   630                                                       # then make a list of that
+   631                                                       # then just go through the list
+   632                                                       # otherwise I cannot follow it anymore
+   633                                                       
+   634      1953       3640.0      1.9      0.1              while not finished:
+   635                                                           
+   636       989       2555.0      2.6      0.1                  if cur_s >= tli['s']:
+   637                                                               # ipdb.set_trace()
+   638                                                               # check for beta queue                
+   639       972       2036.0      2.1      0.1                      if s+N > tli['s'] + nwin:
+   640        25         54.0      2.2      0.0                          curN = tli['s'] + nwin - cur_s
+   641                                                               else:
+   642       947       1755.0      1.9      0.1                          curN = s + N - cur_s
+   643                                                           
+   644                                                                   
+   645       972       1632.0      1.7      0.0                      bXn = cur_s - tli['s']  # see notes
+   646                                                                   
+   647       972       1521.0      1.6      0.0                      eXn = bXn + curN   # see notes
+   648                                                               
+   649       972       3619.0      3.7      0.1                      Xindices=range(bXn,eXn)  # taking care of neg/positive...
+   650                                                               
+   651       972       1620.0      1.7      0.0                      bd = cur_s - s   # see notes
+   652       972       1518.0      1.6      0.0                      ed = bd + curN   # see notes
+   653                                                               
+   654       972       2194.0      2.3      0.1                      dindices=range(bd,ed)
+   655                                                               # put y and X where they belong
+   656                                                               #ipdb.set_trace()
+   657                                                               
+   658                                                               #pd = part of delay(ed)...
+   659       972     334710.0    344.4      9.8                      pdXn, pdy = self._handle_partition_and_hanning(dy, dXn, dindices, Xindices)
+   660                                           
+   661       972     185941.0    191.3      5.4                      pdY = np.dot(pdXn, tli['b'])
+   662       972      15574.0     16.0      0.5                      pde = pdy-pdY
+   663                                           
+   664       972      98410.0    101.2      2.9                      tli['Xn'][Xindices,:] = pdXn
+   665       972      45214.0     46.5      1.3                      tli['y'][Xindices,:] = pdy
+   666       972      38663.0     39.8      1.1                      tli['Y'][Xindices,:] = pdY
+   667                                                           
+   668       972      43702.0     45.0      1.3                      cleaned[itaper][dindices,:] = pde  # assign the data
+   669       972       2719.0      2.8      0.1                      if self.DEBUG:
+   670                                                                   sumcheck[itaper][dindices,:] = self.hwy[Xindices,:]
+   671                                                   
+   672       989       2690.0      2.7      0.1                  if tli['s'] + nwin > s + N:
+   673       964       1509.0      1.6      0.0                      finished=True
+   674       964       1459.0      1.5      0.0                      gotoNextWindow=False
+   675        25         43.0      1.7      0.0                  elif tli['s'] + nwin == s + N:
+   676                                                               finished=True
+   677                                                               gotoNextWindow=True
+   678                                                           else:
+   679        25         36.0      1.4      0.0                      finished=False
+   680        25         35.0      1.4      0.0                      gotoNextWindow=True
+   681                                                                   
+   682                                                                   
+   683       989       1473.0      1.5      0.0                  if gotoNextWindow:       
+   684                                                            
+   685                                                               # 'send off' the current window for estimation
+   686        25       1812.0     72.5      0.1                      self._estimate_betas(tli)
+   687                                                               # ipdb.set_trace()
+   688                                                               
+   689                                                               # 'init' a new one, too. associate our most current beta's to that
+   690        25     631289.0  25251.6     18.4                      self._check_switch_betas()  # figure out / upkeep on beta estimations - check the queue. -- kalman should be implemented here?
+   691        25        154.0      6.2      0.0                      tli['b'] = self.currentbetas   # assign the latest one(s) -- or the Kalman estimated ones
+   692                                           
+   693        25        102.0      4.1      0.0                      tli['s'] += nwin-1
+   694        25         52.0      2.1      0.0                      cur_s = tli['s']
+   695        25      13711.0    548.4      0.4                      tli['Xn'] =np.zeros((self.nwin, len(self.icws) * (self.sfuture+self.spast+1)))
+   696                                                               # you completed a window --> adjust s and N
+   697                                                               
+   698                                           
+   699                                                               #ipdb.set_trace()
+   700                                                               
+   701                                                                   
+   702                                                               
+   703                                                               # HERE - we figure out whether we 'set' the beta's - or not
+   704                                                               # if they're set -- then, we we associate the latest set of beta's to the current window
+   705                                                               # we also will not anymore check whether beta's are estimated
+   706                                                               # instead, we fill the list of 'current' beta's with 0. That will produce 0, too.
+   707                                                               # we also need to pass the current beta's...
+   708                                                               
+   709                                                               # if we're here, then we need to estimate something!
+   710                                                               # send (complete) window to estimator
+   711                                                               # ipdb.set_trace()
+   712                                                               # self._check_switch_betas()
+   713                                           
+   714                                                   #if s > 17000:
+   715                                                   #    ipdb.set_trace()
+   716                                           
+   717                                                   # sum it all up
+   718       482       1002.0      2.1      0.0          if self.taperfactor == 1:
+   719       482      16079.0     33.4      0.5              cleaned_channels = sum(cleaned)  # summate over the tapers (we have 2 tapers with taperfactor == 1, usually.)
+   720       482       1197.0      2.5      0.0              if self.DEBUG:
+   721                                                           checked_sumcheck = sum(sumcheck)
+   722                                                   else:
+   723                                                       cleaned_channels = sum(cleaned) / float(self.taperfactor)
+   724                                                       if self.DEBUG:
+   725                                                           checked_sumcheck = sum(sumcheck) / float(self.taperfactor)
+   726                                           
+   727                                                   
+   728                                                   #if s > 17000:
+   729                                                   #    ipdb.set_trace()
+   730                                           
+   731                                                   # set the corrected channels to the channels that we just corrected!
+   732       482      12244.0     25.4      0.4          ddata[:,self.ichs] = cleaned_channels
+   733       482       1008.0      2.1      0.0          if self.DEBUG:
+   734                                                       ddata[:,self.ichs] = checked_sumcheck  # check whether the weights are always == 1!
+   735       482       4293.0      8.9      0.1          self.s += data.shape[0]   
+   736       482       2436.0      5.1      0.1          return self.rtfilter.handle(ddata)

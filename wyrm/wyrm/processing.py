@@ -2335,6 +2335,17 @@ def logarithm(dat):
     return dat.copy(data=data)
 
 
+
+def absolute(dat):
+    
+    data=dat.data.copy()
+    
+    data = np.abs(data)
+    
+    return dat.copy(data=data)
+
+
+
 def square(dat):
     """Computes the element wise square of ``dat.data``.
 

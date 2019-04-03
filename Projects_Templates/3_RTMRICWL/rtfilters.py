@@ -141,13 +141,17 @@ class MR(RtFilter):
     forget      : if artifact vary, this procedure will make a new artifact template waveform- it keeps the old one, though, but will forget them if it's not used for a long time (i.e., after 'forget' TRs)
     highpass    : In case you want to retain slow oscillations in the MR-corrected signal, this is where you specify order, freq and srate. Recommend you provide an empty list here and do LPF before doing MR.
 
+    ncorrvalues : number of values to use for calculating pearson correlations. Since this is a big bottleneck, setting this to 5000 or so will speed things up.
+                  otherwise, this will try to pearson-correlate across ALL trsamples + nbchannels, which ais a number going to > 300000. For EACH artifact in the library.
+                  so, we won't need that many.
+
     after initializing -- pass data using MR.handle(data) -- it should return MRI-cleaned data.
 
     """
     
     
-    def __init__(self, trsamples=10000, N_thr=5, corr_thr = 0.995, forget=10, highpass=[3, 1.0, 5000]):
-        super(MR, self).__init__(trsamples=trsamples, N_thr=N_thr, corr_thr=corr_thr, forget=forget, highpass=highpass)
+    def __init__(self, trsamples=10000, N_thr=5, corr_thr = 0.995, forget=10, highpass=[3, 1.0, 5000], ncorrvalues=5000):
+        super(MR, self).__init__(trsamples=trsamples, N_thr=N_thr, corr_thr=corr_thr, forget=forget, highpass=highpass, ncorrvalues=ncorrvalues)
         self.rtfilter = RtFilter()
         
         self.mrt=[]
@@ -161,6 +165,7 @@ class MR(RtFilter):
         self.corr_thr = corr_thr
         self.N_thr = N_thr
         self.trsamples = trsamples    
+        self.ncorrvalues = ncorrvalues
         
         self.applyHPF = False
         if len(highpass)>0:
@@ -169,6 +174,8 @@ class MR(RtFilter):
             self.hpzi = lfilter_zi(self.hpb, self.hpa)
             self.applyHPF = True
             self.zi_initiated = False
+
+        self.first_data_sent = False
 
         
     def handle(self, datain):
@@ -179,7 +186,16 @@ class MR(RtFilter):
         '''
         
         
-        nbpoints = datain.shape[0]
+        if not self.first_data_sent:
+        
+            self.first_data_sent = True
+            _, self.nbchans = datain.shape
+            self.prcorr_downsampling_factor = round((self.trsamples * self.nbchans) /  self.ncorrvalues)
+            
+        
+        nbpoints = datain.shape[0] # this changes all the time...
+        prcorr_downsampling_factor = self.prcorr_downsampling_factor
+        trsamples = self.trsamples
         
         # filter it - butterworth style:
         if self.applyHPF:
@@ -269,8 +285,9 @@ class MR(RtFilter):
             #corrs, N = zip(*[(pearsonr(self.buff.flatten(), m.flatten()), self.mrN(i_N)) for i_N, m in enumerate(self.mrt)])
             #if len(self.mrN)>0:
             #    if self.mrN[0]>5:
-            #        pdb.set_trace()
-            corrs = [pearsonr(self.buff.flatten(), m.flatten())[0] for m in self.mrt]
+            #ipdb.set_trace()
+            
+            corrs = [pearsonr(self.buff.flatten()[0:trsamples:prcorr_downsampling_factor], m.flatten()[0:trsamples:prcorr_downsampling_factor])[0] for m in self.mrt]
             #print(corrs)
 
             # update the library -- actions
@@ -405,7 +422,7 @@ class MR(RtFilter):
 
 
 
-def estimate_it(X, y, Yprev, prev_betas):
+def estimate_it(X, y, Yprev, prev_betas, saveglms):
     """ The function that ACTUALLY estimates beta's -- the rest is all upkeep & maintenance
     """
     
@@ -425,8 +442,10 @@ def estimate_it(X, y, Yprev, prev_betas):
     
     e=time.time()
 
-    scipy.io.savemat(fname, {'X':X, 'betas':betas, 'prev_betas':prev_betas, 'diff1':diff1, 'diff2':diff2, 'y':y, 'Yprev':Yprev,'calculation-time':e-b})
-    #qdiff.put(diff)
+    if saveglms:
+        scipy.io.savemat(fname, {'X':X, 'betas':betas, 'prev_betas':prev_betas, 'diff1':diff1, 'diff2':diff2, 'y':y, 'Yprev':Yprev,'ctime':e-b})
+        print('saving GLM: %s' % fname)
+    # qdiff.put(diff)
 
 
 
@@ -441,27 +460,30 @@ class estimatorProcess(multiprocessing.Process):
         so start up that Process just once - at the beginning of the meausrement
     """
     
-    def __init__(self, q_in, q_out):
+    def __init__(self, q_in, sharedArr, _can_read_arr_val):
         
         super(estimatorProcess, self).__init__()
         self.ev_stop = multiprocessing.Event()
         self.q_in = q_in
-        self.q_out = q_out
+        self.sharedArr = sharedArr
+        self._can_read_arr_val = _can_read_arr_val
         
         
     
     def run(self):
         
         while not self.ev_stop.is_set():
-            time.sleep(0.005)
+            time.sleep(0.0001)
             
             if not self.q_in.empty():
                 
-                X, y, Yprev, prev_betas = self.q_in.get()
+                X, y, Yprev, prev_betas, saveglms = self.q_in.get()
                 
-                betas, diff1, diff2 = estimate_it(X, y, Yprev, prev_betas)
+                betas, diff1, diff2 = estimate_it(X, y, Yprev, prev_betas, saveglms)
         
-                self.q_out.put((betas, diff1, diff2))
+                # shared memory magic...
+                self.sharedArr[:] = betas.flatten()
+                self._can_read_arr_val.value = 1
         
 
     def stop(self):
@@ -473,13 +495,43 @@ class estimatorProcess(multiprocessing.Process):
 class CWL(RtFilter):
     ''' This handles the CWL regression! -- I should also include optional HP filter here
         low-pass filtering should be done separately
+        
+        Params
+        ------
+        seconds_in_window=6.0                   - some kind of useful interval
+        tdelay=0.035,                           - how much will the signal be delayed (and what's the order of it)
+        icws=[1,2,3],                           - an array (range) of channel indices - beware, starts at 0 (unlike matlab, which starts at 1)
+        ichs=[33,34,35,36],                     - an array of the indices of the CWL's. - beware, starts at 0 (unlike matlab, which starts at 1)
+        fs=1000,                                - sampling rate to use. I recommend using 500 actually, for faster processing. Requires downsampling!
+        highpass=[]  (optional: [3, 1.0, 5000]) - IN CASE you wish to do anything with ultra-low frequencies, both MR and CWL need to use the built-in hpf.
+                                                  this makes sure the signal used to CALCULATE what's to be removed is HPF-ed. Then that's subtracted from 
+                                                  unfiltered data. See PREP Pipeline paper for the main gist of that idea: Bigdely-Shamlo N et al, 
+                                                  The PREP pipeline: standardized preprocessing for large-scale EEG analysis. Front Neuroinformatics 2015
+                                                  ... usually, you'd just wish to use a hpf module before hand.. and work with bandpass filters..
+        saveglms=False                          - mainly a debugging feature to check out consistency of parameter estimates (and for my Kalman diagostics)
+        
     '''
     
     # some reasonable initial values
-    def __init__(self, seconds_in_window=6.0, tdelay=0.035, icws=[1,2,3], ichs=[33,34,35,36], fs=1000, highpass=[]):
-        super(CWL, self).__init__(seconds_in_window=seconds_in_window, tdelay=tdelay, icws=icws, ichs=ichs, fs=fs, highpass=highpass)
+    def __init__(self, seconds_in_window=6.0, tdelay=0.035, icws=[1,2,3], ichs=[33,34,35,36], fs=1000, highpass=[3, 1.0, 5000], saveglms=False):
+        super(CWL, self).__init__(seconds_in_window=seconds_in_window, tdelay=tdelay, icws=icws, ichs=ichs, fs=fs, highpass=highpass, saveglms=saveglms)
+        
         
         self.rtfilter = RtFilter()
+        
+        self.applyHPF = False
+        if len(highpass)>0:
+            # make the high-pass butter filter
+            self.hpb, self.hpa = signal.butter(highpass[0], 2*highpass[1]/highpass[2], btype='high', analog=False)  # a high-pass filter
+            self.hpzi = lfilter_zi(self.hpb, self.hpa)
+            self.applyHPF = True
+            self.zi_initiated = False
+
+
+        self.first_data_sent = False
+        
+        
+        self.saveglms = saveglms
         
         
         self.DEBUG=False
@@ -530,6 +582,9 @@ class CWL(RtFilter):
         # the full window...
         self.hwts = np.array(np.multiply(hDelayMat, hTimeMat))
         
+        # over-ride the stuff:
+        self.hwts =  np.array(hTimeMat)
+        
         # we need for y:
         self.hwy = np.array(self.taperfunction(self.nwin)).reshape(self.nwin, 1)
 
@@ -571,30 +626,58 @@ class CWL(RtFilter):
         self._oldcwls = []
         self._buffereddata = []
         self._buffereddata2 = []
+
+        # self._queue_incoming_diffs = multiprocessing.Queue()
+        self.betas_are_estimated=False
+        self.betas=[np.zeros((len(self.icws)*(self.spast+self.sfuture+1),len(self.ichs)))]
         
         self._queue_estimate_it = multiprocessing.Queue()
         self._queue_incoming_betas = multiprocessing.Queue()
+        self._beta_shared_arr = multiprocessing.RawArray('d', self.betas[0].flatten())
+        self._can_read_arr = multiprocessing.Event()
+        self._can_read_arr_val = multiprocessing.Value('i', 1)
 
         # ipdb.set_trace()
         # start up our estimator Process:        
-        self.estimatorProcess = estimatorProcess(self._queue_estimate_it, self._queue_incoming_betas)
+        self.estimatorProcess = estimatorProcess(self._queue_estimate_it, self._beta_shared_arr, self._can_read_arr_val)
         self.estimatorProcess.start()
 
         
-        # self._queue_incoming_diffs = multiprocessing.Queue()
-        self.betas_are_estimated=False
-        self.betas=[np.zeros((len(self.icws)*(self.spast+self.sfuture+1),1))]
+
         
         self.currentbetas = self.betas[-1]
         self.switch_betas=False
         
         
+        
     
-    def handle(self, data):
+    def handle(self, datain):
+        
+        
+        # filter it - butterworth style:
+        if self.applyHPF:
+            # we consider the incoming data - but only filtered
+            
+            if not self.zi_initiated:
+                self.hpzi = np.tile(self.hpzi, (datain.shape[1], 1)).T
+                self.zi_initiated = True
+            
+            # pdb.set_trace()
+            #data, self.hpzi = signal.lfilter(self.hpb, self.hpa, datain, zi=self.hpzi, axis=0)
+            data, self.hpzi = signal.lfilter(self.hpb, self.hpa, datain, zi=self.hpzi, axis=0)
+            #data = signal.filtfilt(self.hpb, self.hpa, datain, axis=0)
+        else:
+            data = datain
         
         
         # first to do timeshifting stuff --> then worry about allocation into different subregions...
         ddata, dy, dXn = self._handle_delays(data)
+        
+        # we HAVE called this -- but we need a second buffer here. - this function has reduced functionality than the one above:
+        if self.applyHPF:
+            ddata = self._return_delayed_data(datain)
+            # ddy = ddata[:,self.ichs]
+        
         
         s=self.s  # current sample
         N=data.shape[0]
@@ -606,6 +689,10 @@ class CWL(RtFilter):
         cleaned = []
         for i in range(len(self.taperlist)):
             cleaned.append(data[:,0:len(self.ichs)].copy())
+            
+        to_subtract = []
+        for i in range(len(self.taperlist)):
+            to_subtract.append(data[:,0:len(self.ichs)].copy())
 
 
         if self.DEBUG:
@@ -656,7 +743,10 @@ class CWL(RtFilter):
                     #ipdb.set_trace()
                     
                     #pd = part of delay(ed)...
-                    pdXn, pdy = self._handle_partition_and_hanning(dy, dXn, dindices, Xindices)
+                    #if not self.applyHRF:
+                    pdXn, pdy = self._handle_partition_and_hanning(dy, dXn, [bd, ed], [bXn, eXn])
+                    #else:
+                    #    pdXn, pdy = self._handle_partition_and_hanning(dy, dXn, dindices, Xindices)
 
                     pdY = np.dot(pdXn, tli['b'])
                     pde = pdy-pdY
@@ -666,6 +756,7 @@ class CWL(RtFilter):
                     tli['Y'][Xindices,:] = pdY
                 
                     cleaned[itaper][dindices,:] = pde  # assign the data
+                    to_subtract[itaper][dindices,:] = pdY
                     if self.DEBUG:
                         sumcheck[itaper][dindices,:] = self.hwy[Xindices,:]
         
@@ -682,17 +773,19 @@ class CWL(RtFilter):
                         
                 if gotoNextWindow:       
                  
-                    # 'send off' the current window for estimation
-                    self._estimate_betas(tli)
                     # ipdb.set_trace()
                     
                     # 'init' a new one, too. associate our most current beta's to that
                     self._check_switch_betas()  # figure out / upkeep on beta estimations - check the queue. -- kalman should be implemented here?
+                    # 'send off' the current window for estimation
+                    self._estimate_betas(tli)
+
+                    # change tli:                    
                     tli['b'] = self.currentbetas   # assign the latest one(s) -- or the Kalman estimated ones
 
                     tli['s'] += nwin-1
                     cur_s = tli['s']
-                    tli['Xn'] =np.zeros((self.nwin, len(self.icws) * (self.sfuture+self.spast+1)))
+                    # tli['Xn'] =np.zeros((self.nwin, len(self.icws) * (self.sfuture+self.spast+1)))
                     # you completed a window --> adjust s and N
                     
 
@@ -716,11 +809,13 @@ class CWL(RtFilter):
 
         # sum it all up
         if self.taperfactor == 1:
-            cleaned_channels = sum(cleaned)  # summate over the tapers (we have 2 tapers with taperfactor == 1, usually.)
+            # cleaned_channels = sum(cleaned)  # summate over the tapers (we have 2 tapers with taperfactor == 1, usually.)
+            cwlsignals_to_subtract = sum(to_subtract)
             if self.DEBUG:
                 checked_sumcheck = sum(sumcheck)
         else:
-            cleaned_channels = sum(cleaned) / float(self.taperfactor)
+            # cleaned_channels = sum(cleaned) / float(self.taperfactor)
+            cwlsignals_to_subtract = sum(to_subtract) / float(self.taperfactor)
             if self.DEBUG:
                 checked_sumcheck = sum(sumcheck) / float(self.taperfactor)
 
@@ -729,7 +824,7 @@ class CWL(RtFilter):
         #    ipdb.set_trace()
 
         # set the corrected channels to the channels that we just corrected!
-        ddata[:,self.ichs] = cleaned_channels
+        ddata[:,self.ichs] = ddata[:,self.ichs] - cwlsignals_to_subtract
         if self.DEBUG:
             ddata[:,self.ichs] = checked_sumcheck  # check whether the weights are always == 1!
         self.s += data.shape[0]   
@@ -745,15 +840,19 @@ class CWL(RtFilter):
             - and return result?
         """
         
+        bd, ed = dindices
+        bXn, eXn = Xindices
         
-        # ipdb.set_trace()
-        hanning_for_y = self.hwy[Xindices,:]
+        #if any([x < 0 for x in [bd, ed, bXn, eXn]]):
+        #    ipdb.set_trace()
         
-        pdy = dy[dindices] * hanning_for_y
+        hanning_for_y = self.hwy[bXn:eXn,:]
+        
+        pdy = dy[bd:ed] * hanning_for_y
 
-        hanning_for_dXn = self.hwts[Xindices,:]
+        hanning_for_dXn = self.hwts[bXn:eXn,:]
         
-        pdXn = dXn[dindices,:] * hanning_for_dXn
+        pdXn = dXn[bd:ed,:] * hanning_for_dXn
         
         return pdXn, pdy
         
@@ -778,6 +877,9 @@ class CWL(RtFilter):
         # then get the data (and make a copy of it?)
         tmpdata = copy.deepcopy(self._buffereddata)
         
+        tmpdata2 = tmpdata[:, self.icws]  # remove the need for advanced indexing, so we can just slice it:
+        
+        
         # then: construct the Xn
         Xn = np.zeros((data.shape[0], len(self.icws) * (self.sfuture+self.spast+1)))
 
@@ -785,22 +887,26 @@ class CWL(RtFilter):
         for i, d in enumerate(self.delayvec):
             
             # this is now actually correct!
-            startind = -len(self.delayvec)+i-data.shape[0]+1
+            startind = tmpdata.shape[0]-len(self.delayvec)+i-data.shape[0]+1
             stopind = startind + data.shape[0]
             
-            # ipdb.set_trace()
-            tmpdata2=tmpdata[range(startind,stopind), :]
-            Xn[:, i*len(self.icws):(i+1)*len(self.icws)] = tmpdata2[:, self.icws]        
+            #try:
+                
+                
+                #tmpdata2=tmpdata[range(startind,stopind), :]
+            Xn[:, i*len(self.icws):(i+1)*len(self.icws)] = tmpdata2[startind:stopind, :]
+            #except:
+
         
         
         # Xn is done: now deal with y
         # normal_range:
-        startind = -self.zerodelayindex-data.shape[0]
+        startind = tmpdata.shape[0] - self.zerodelayindex-data.shape[0]
         stopind = startind + data.shape[0]
         
-        alldata = tmpdata[range(startind,stopind),:]
+        alldata = tmpdata[startind:stopind,:]
         
-        y=alldata[:,self.ichs]
+        y=tmpdata[startind:stopind,self.ichs]
         
         
         return alldata, y, Xn
@@ -909,9 +1015,10 @@ class CWL(RtFilter):
         #p=multiprocessing.Process(target=estimate_it, args=(X, y, Yprev, self._queue_incoming_betas, prev_betas))
         #p.start()
         
-        self._queue_estimate_it.put((X, y, Yprev, prev_betas))
+        self._queue_estimate_it.put((X, y, Yprev, prev_betas, self.saveglms))
         # self.processes.append(p)  # for joining later on...
             
+
 
 
             
@@ -920,9 +1027,12 @@ class CWL(RtFilter):
         """
         # check the queus - if they are full/filled, then change betas
         #ipdb.set_trace()
-        if not self._queue_incoming_betas.empty():
-            betas, diff1, diff2 = self._queue_incoming_betas.get()
+        if self._can_read_arr_val.value > 0:
             
+            betas = np.frombuffer(self._beta_shared_arr).reshape((len(self.icws)*(self.spast+self.sfuture+1),len(self.ichs)))
+            # betas = self._queue_incoming_betas.get_nowait()
+            #self._can_read_arr.clear() 
+            self._can_read_arr_val.value = -1
             # we append em here...
             self.betas.append(betas)
 
@@ -993,7 +1103,7 @@ class CWL(RtFilter):
 
     
 
-class SAFERESAMPLE(RtFilter):
+class RESAMPLESAFE(RtFilter):
     """ Smartly re-sample to an arbitrary sampling interval
         The bad thing that can happen in real-time is that resampling a chunk of 200 samples with a fs of 1000
         into a chunk of 1000/128 = 7 (integer, round down) samples and then forget about the remaining
@@ -1004,26 +1114,65 @@ class SAFERESAMPLE(RtFilter):
     
         This functionality is also explained in the wyrm package - but here, we don't wish (yet) to utilize wyrms
         data 'frame' objects to deal with data - just simple numpy matrices.
+        
+        This can downsample to any arbitrary frequency - also odd ones
+        and it buffers the data.
     """
     
     
-    def __init__(self):
+    def __init__(self, fs_source, fs_target):
+        
+        
+        super(RESAMPLESAFE, self).__init__(fs_source=fs_source, fs_target=fs_target)
+        
+        self.rtfilter = RtFilter()
         
         self.gotfirstdata=False
+        self.fs_source = fs_source
+        self.fs_target = fs_target
         
+        self.frac_downsample = self.fs_source / float(self.fs_target)
+
+        self.buff=None
 
     
     
     def handle(self, data):
         
-        
+
+        # first we buffer it:        
         if not self.gotfirstdata:
             self.gotfirstdata=True
+            self.buff=data
             
+            # what is the empty data look like?
+            dimx, dimy = data.shape
+            
+            self.empty_data = np.empty((0, dimy))
+            
+        else:
+            self.buff=np.concatenate((self.buff, data))
+
+
+        data_i = self.buff.shape[0]        
+        max_i = int(data_i // self.frac_downsample)
+        # then - we get the stuff we need:
         
+        if max_i > 0:
+            indices = [int(x * self.frac_downsample) for x in range(max_i)]
+            
+            
+            to_return = self.buff[indices,:]
+            
+            to_keep = self.buff[range(indices[-1]+round(self.frac_downsample),data_i),:]
+            
+            self.buff = to_keep
+            
+        else:
+            to_return = self.empty_data
         
+        return self.rtfilter.handle(to_return)
         
-        pass
     
     
     
