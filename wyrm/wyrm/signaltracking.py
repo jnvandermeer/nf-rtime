@@ -12,6 +12,7 @@ import logging
 import re
 import sys
 
+
 import numpy as np
 import scipy as sp
 from scipy import signal
@@ -29,9 +30,12 @@ class above_thr(object):
         
         """
         
+        self.times_called = 0
         self.thr = thr
         self.dur = dur
         self.chs = chs
+        
+        self.dur_for_area = self.dur
 
         self.bcinet=bcinet
         
@@ -49,119 +53,110 @@ class above_thr(object):
         self.signal_intensity_sent = False
         
         
+            
+        self.psduration = 0
+        self.psarea = 0
+        self.psareaduration = 0
+        
+        self.pprev_signal = 0
+        self.pprev_duration = 0
+        self.pprev_areaduration = 0
+        self.pprev_area = 0
+
+        
         # self._initialized = False
     
     
     def check_rising(self, dat):
         
+        self.times_called += 1
+        
+        self.fs=dat.fs
+        self.datsamples = dat.data.shape[0]
         
         # average tge signal
         this_signal = np.mean(dat.data[:,:],1)
         
-        # naje something that's true/false:
-        bigger_than_thr = this_signal >= self.thr
-        
-        durations=[]
-        area_durations=[]
-        areas=[]
 
-        sign_duration=self._current_duration
-        area_duration=self._current_audio_duration
-        area=self._current_area
-        
-        for sig, tf in zip(this_signal, bigger_than_thr):
-            if tf==True:
-                sign_duration += 1.0/dat.fs # time 
-                area_duration += 1.0/dat.fs
-                area += sig * (1/dat.fs) # area
+        TF = np.zeros((this_signal.shape))
+        audioTF = np.zeros((this_signal.shape))
+
+        # repeatedly call it for each sample
+        for i, s in enumerate(this_signal):
+            self._check_each_sample(s)
+            if self.TF:
+                TF[i] = 1
+            if self.audioTF:
+                audioTF[i] = 1
                 
+        
+        return TF, audioTF
+        
+
+        
+
+    # apply a subfunction that we will call for each sample...
+    # why it take me so long to come up with that solution?
+    def _check_each_sample(self,s):
+        # s is the signal.
+        
+        
+        self.TF = 0
+        self.audioTF = 0
+        
+        # is it bigger than 0?
+        if s > self.thr:
+            self.psarea += (s-self.thr) / self.fs
+            self.psduration += 1.0 / self.fs
+            self.psareaduration += 1.0 / self.fs
+        else:
+            self.psarea = 0
+            self.psduration = 0
+            self.psareaduration = 0
+            
+        if self.psduration == 0:
+            self.signal_counter_sent=False
+            
+        if self.pprev_areaduration == 0:
+            self.signal_intensity_sent=False
+
+        if self.pprev_duration == 0:
+            self.dur_for_area =  self.dur
+
+            
+
+        # so if bigger than duration -- send the signal, but don't keep sending it...
+        if self.psduration >= self.dur and not self.signal_counter_sent:
+            self.signal_counter_sent=True
+            self.TF = 1
+
+            if self.bcinet is not None:
+                pass
             else:
-                sign_duration=0.0
-                area_duration=0.0
-                area=0.0
-
-            durations.append(sign_duration)
-            area_durations.append(area_duration)
-            areas.append(area)
+                print('sending signal -- I ! - %d - %d - %s - %s' % (self.datsamples, self.times_called, str(True), str(-1)))
         
-        
-        send_counter = False
-        send_signal_intensity = False
-            
-        
-        # check/count whether things are above threshold
-        if max(durations) >= self.dur:
-            send_counter = True
-            index_of_duration = durations.index(max(durations))
-            
 
-        if max(area_durations) >= self.dur and not max(area_durations) == area_durations[-1]:
-            send_signal_intensity = True
-            # what's the area at the highest time?
+        if self.pprev_areaduration >= self.dur_for_area and s < self.pprev_signal and not self.signal_intensity_sent:
+            self.signal_intensity_sent=True
+            self.psareaduration=0
+            self.dur_for_area += 0.050
             
-            index_of_area = np.where(np.logical_and(bigger_than_thr, this_signal==max(this_signal)))
-            area_to_send = areas[index_of_area]
-            # max(consider_these_values)
-            # index_highest_voltage = this_signal.index(max_this_signal)
-            self._current_audio_duration = (len(areas) - index_of_area) / dat.fs
-
-
-        
-        if send_counter and not self.signal_counter_sent:
-            # print('sending signal!')
-            self.signal_sent = True
-            
-            # reset...
-            # self._current_duration = 0.0 # in seconds...
+            self.audioTF = 1
             
             if self.bcinet is not None:
-                print('sending signal! - %s - %s' % (str(True), str(-1)))
-                
-                #send interaction signal - 2 elements: [True/False, Intensity]
-                
-            # we send a signal - which contains a value
-            # a values of -1 does not play any sound -- a value > 1 plays a sound - since the value determines what the pitch is
-
-
+                pass
+            else:
+                # import ipdb; ipdb.set_trace()
+                print('sending signal! - %d %s - %s -- %s' % (self.times_called, str(False), str(self.pprev_area), str(self.dur_for_area)))
         
-        if send_signal_intensity and not self.signal_counter_sent:
-            print('sending signal!')
-            self.signal_intensity_sent = True
-            
-            # ... what... IS the intensity !!?!?!?            
-            if self.bcinet is not None:
-                print('sending signal! - %s - %s' % (str(False), str(area_to_send)))
+        
+        self.pprev_signal = s
+        self.pprev_duration = self.psduration
+        self.pprev_areaduration = self.psareaduration
+        self.pprev_area = self.psarea
+        
+        
             
             
-            self.signal_intensity_sent = False
             
             
-        # if it hits 0 anytime after - reset stuff...
-        # is there any False (or 0) AFTER index?
-        if self.signal_counter_sent and any(bigger_than_thr[index_of_duration:]==False):
-
-            # time to reset everything            
-            self.signal_counter_sent = False
-            self.signal_intensity_sent = False
-
-            self._current_duration = 0.0 # in seconds...
-            self._current_audio_duration = 0.0 # in seconds...
-            self._current_area = 0.0
-        
-
-            
-        # check if we need to reset signal_intensity_sent here:
-        # if self.signal_intensity_sent = True and 
-        
-        # check if anywhere after the max durations, a False occurs...
-        # where in the list did it occur?
-        
-        
-        # dat
-        
-        
-        # check whether things are above threshold for longer than a specific time:
-        
-        
-        
-        # self._cu
