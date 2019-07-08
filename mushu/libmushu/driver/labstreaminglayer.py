@@ -77,6 +77,10 @@ class LSLAmp(Amplifier):
         if len(streams) == 0:
             # try a signal?
             streams=pylsl.resolve_byprop('type','signal',timeout=1.0)
+            
+        if len(streams) == 0:
+            streams=pylsl.resolve_byprop('type','EEG',timeout=1.0)
+            
         
         if len(streams) > 1:
             logger.warning('Number of EEG streams is > 0, picking the first one.')
@@ -89,7 +93,9 @@ class LSLAmp(Amplifier):
         streams = pylsl.resolve_byprop(streammarkerargs[0],streammarkerargs[1], timeout=1.0)
         if len(streams) > 1:
             logger.warning('Number of Marker streams is > 0, picking the first one.')
-        self.lsl_marker_inlet = pylsl.StreamInlet(streams[0], max_buflen=30)
+            
+        if len(streams) == 1:
+            self.lsl_marker_inlet = pylsl.StreamInlet(streams[0], max_buflen=30)
         info = self.lsl_inlet.info()
         self.n_channels = info.channel_count()
         self.channels = ['Ch %i' % i for i in range(self.n_channels)]
