@@ -1,0 +1,22 @@
+#!/bin/bash
+
+
+fname=$1
+
+if [ -z $fname ]
+then
+  echo "provide a .py filename"
+  exit 1
+fi
+
+fpath=`realpath $fname`
+
+pythonmodule=${fpath/\/home\/nfcontrol\/nf\/nfb\//}
+pythonmodule=${pythonmodule/.py/}
+
+pythonmodule=`echo $pythonmodule|sed s/\\\//./g`
+
+
+runcommand="ipython -m $pythonmodule $fname"
+bash -c "$runcommand"
+# bash --rcfile <(echo ". ~/.bashrc; $runcommand")
