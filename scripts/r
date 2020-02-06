@@ -11,14 +11,21 @@ fi
 
 fpath=`realpath $fname`
 
+<<<<<<< HEAD
 pythonmodule=${fpath/\/home\/johan\/nf\/nfb\//}
+=======
+pythonmodule=${fpath/\/home\/nfcontrol\/nf\/nfb\//}
+>>>>>>> c8c07863ded649b0eaab6070cf2fdb262ad44393
 pythonmodule=${pythonmodule/.py/}
 
 pythonmodule=`echo $pythonmodule|sed s/\\\//./g`
 
 
 runcommand="ipython -m $pythonmodule $fname"
+<<<<<<< HEAD
 echo $runcommand
 env PYTHONBREAKPOINT=pudb.set_trace bash -c "$runcommand"
+=======
+>>>>>>> c8c07863ded649b0eaab6070cf2fdb262ad44393
 bash -c "$runcommand"
 # bash --rcfile <(echo ". ~/.bashrc; $runcommand")
