@@ -1,0 +1,34 @@
+callpyff
+check_big_files.sh
+condaproxy.sh
+doc
+environment-rt-linux.yml
+environment-rt-win.yml
+h.mat
+ipynb
+jupyter_logo.png
+jupyter_logo.svg
+LICENSE
+mushu
+NF spyder (rt).desktop
+nftools
+node_modules
+Projects
+Projects_Templates
+README.md
+rt jupyterlab.desktop
+scripts
+spyder_logo.png
+start_jupyerlab.sh
+start_spyder.sh
+tmp
+trim.sh
+Tryouts
+Tutorials
+Untitled1.ipynb
+Untitled2.ipynb
+Untitled3.ipynb
+Untitled.ipynb
+untitled.txt
+wyrm
+yarn.lock
