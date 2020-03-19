@@ -168,7 +168,8 @@ class AmpDecorator(Amplifier):
                                   args=(self.marker_queue,
                                         self.tcp_reader_running,
                                         tcp_reader_ready,
-                                        self.stoploopev
+                                        self.stoploopev,
+                                        PORT
                                         )
                                   )
         self.tcp_reader.start()
@@ -292,19 +293,19 @@ class AmpDecorator(Amplifier):
         return self.amp.get_sampling_frequency()
 
 
-def handle_data(queue, data):
+def handle_data(queue, data, begintime):
     # do the time-stamp thingy + put it into the queue.
-    timestamp = time.time()
+    timestamp = time.time() - begintime
     markertext = data.decode("utf-8")
     queue.put([timestamp, markertext])
-    print("%d" % queue.qsize())
+    # print("%d" % queue.qsize())
 
     item=queue.get()
     queue.put(item)
-    print(item)
+    # print(item)
 
 
-def marker_reader(queue, running, ready, stoploopev):
+def marker_reader(queue, running, ready, stoploopev, PORT):
     # define our UDP class , which includes what to actually DO with the data:
     # this also kind-of uses the async/await stuff!
 
@@ -326,14 +327,14 @@ def marker_reader(queue, running, ready, stoploopev):
 
         def datagram_received(self, data, addr):
             message = data.decode()
-            print('Received %r from %s' % (message, addr))
-            print('Send %r to %s' % (message, addr))
-            self.transport.sendto(data, addr)
+            # print('Received %r from %s' % (message, addr))
+            # print('Send %r to %s' % (message, addr))
+            # self.transport.sendto(data, addr)
 
             # so -- instead of echo-ing some stuff -- move the queue forward to
             # -- or IN ADDITION TO echo-ing --> handle the data.
             # data handler, along with the data.
-            handle_data(queue, data)
+            handle_data(queue, data, begin_time)
 
     # Define also the TCP class, with also a 'data handler'
     # put the queue in dunder init
@@ -360,11 +361,12 @@ def marker_reader(queue, running, ready, stoploopev):
             self.transport.close()
 
             # OK and then:
-            handle_data(queue, data)
+            handle_data(queue, data, begin_time)
 
     # get our event loop from asyncio -- not our own event loop stuff as shown in the youtube video:
     # it's still a bit esotheric.
     loop = asyncio.new_event_loop()
+    begin_time = time.time()
 
     # add stuff to the loop. First the UDP:
     # One protocol instance will be created to serve all client requests
@@ -381,6 +383,22 @@ def marker_reader(queue, running, ready, stoploopev):
     #    print("Starting TCP server")
     # the docs of asyncio are abhorrent. According to docs, this returns a server object.
     # but a server object is apparently also a coroutine?
+    import socket, errno
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", PORT))
+    except socket.error as e:
+        if e.errno == errno.EADDRINUSE:
+            print("Port {} is already in use".format(PORT))
+            return
+        else:
+            # something else raised the socket.error exception
+            # print(e)
+            pass
+    s.close()
+
+    print('starting markerserver on port: {}'.format(PORT))
     coro = loop.create_server(lambda: EchoServerClientProtocol(queue), '127.0.0.1', PORT)
     server = loop.run_until_complete(coro)
 
@@ -428,5 +446,6 @@ def marker_reader(queue, running, ready, stoploopev):
     # print("stopping ampdecorator, III")
     # close the loop, plz?
     loop.close()
+    print('stopped markerserver on: {}'.format(PORT))
 
     # print("stopping ampdecorator, IV")

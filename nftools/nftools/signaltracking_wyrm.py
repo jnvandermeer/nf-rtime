@@ -28,7 +28,7 @@ from callpyff import bcixml
 
 
 class sending_to_nfstim(object):
-    def __init__(self, sampling_frequency, thr=1.0, dur=1.0, bcinet=None, chs=None, feedback_type='eeg', verbose=False, **kwargs):
+    def __init__(self,thr=1.0,dur=1.0,bcinet=None, chs=None, feedback_type='eeg', **kwargs):
         
         """
         Set the threshold to use
@@ -38,7 +38,7 @@ class sending_to_nfstim(object):
         
         """
         
-        self.verbose=verbose
+        
         self.bcinet=bcinet
         
         if feedback_type == 'eeg':
@@ -58,12 +58,8 @@ class sending_to_nfstim(object):
             # so as to make THAT feedback go from 0 to 20 (20 units between lowest and highest)
             self._st_offset = 0
             self._st_scaling = 20
-
-        if 'st_scaling' in kwargs.keys():
-            self._st_scaling=kwargs['st_scaling']        
-
-        self.fs = sampling_frequency
-
+        
+        
         self.times_called = 0
         self.thr = thr
         self.dur = dur
@@ -146,11 +142,11 @@ class sending_to_nfstim(object):
         
         self.times_called += 1
         
-        # self.fs=dat.fs
-        self.datsamples = dat.shape[0]
+        self.fs=dat.fs
+        self.datsamples = dat.data.shape[0]
         
         # average tge signal
-        this_signal = dat # np.mean(dat[:,:],1)
+        this_signal = np.mean(dat.data[:,:],1)
         
 
         TF = np.zeros((this_signal.shape))
@@ -162,8 +158,7 @@ class sending_to_nfstim(object):
             if self.TF:
                 TF[i] = 1
             if self.audioTF:
-                # audioTF[i] = 1
-                audioTF[i] = self.audioTF
+                audioTF[i] = 1
                 
         return TF, audioTF
         
@@ -176,7 +171,7 @@ class sending_to_nfstim(object):
         """
         
         
-        this_signal = dat # np.mean(dat[:,:],1)
+        this_signal = np.mean(dat.data[:,:],1)
         to_send = np.median(this_signal)
         
         # change scalings - emg from 0 to 1; eeg from -1 to +1
@@ -233,8 +228,7 @@ class sending_to_nfstim(object):
                 self.bcinet.send_signal(bcixml.BciSignal({self.control_ev_key: [True, -1]},None, bcixml.CONTROL_SIGNAL))
             else:
                 pass
-            if self.verbose:
-                print('sending signal -- I ! - %d - %d - %s - %s' % (self.datsamples, self.times_called, str(True), str(-1)))
+            print('sending signal -- I ! - %d - %d - %s - %s' % (self.datsamples, self.times_called, str(True), str(-1)))
         
 
         if self.pprev_areaduration >= self.dur_for_area and s < self.pprev_signal and not self.signal_intensity_sent:
@@ -246,15 +240,14 @@ class sending_to_nfstim(object):
             # this will be converted to a chime with the correct pitch
             to_send_rating_from_0_to_10 = self._from_st_duration_to_0_10_rating(self.psduration)
             
-            self.audioTF = to_send_rating_from_0_to_10 + 1
+            self.audioTF = 1
             
             if self.bcinet is not None:
                 self.bcinet.send_signal(bcixml.BciSignal({self.control_ev_key: [False, to_send_rating_from_0_to_10]},None, bcixml.CONTROL_SIGNAL))
             else:
                 pass
                 # import ipdb; ipdb.set_trace()
-            if self.verbose:
-                print('sending signal! - %d %s - %s -- %s' % (self.times_called, str(False), str(self.pprev_area), str(self.dur_for_area)))
+            print('sending signal! - %d %s - %s -- %s' % (self.times_called, str(False), str(self.pprev_area), str(self.dur_for_area)))
         
         
         self.pprev_signal = s
@@ -315,11 +308,6 @@ class sending_to_nfstim(object):
         
         self._new_thr_for_st = new_threshold_for_st
             
-
-    def set_new_duration(self, new_duration):
-        self.dur = new_duration
-        self.dur_for_area = self.dur
-
             
     def set_stposition_loweroffset(self, offset):
         """ this should ideally remain 0, but if so required - you can apply an offset (fractional, between 0 and 1)
@@ -362,7 +350,7 @@ class sending_to_nfstim(object):
             
     def _from_st_duration_to_0_10_rating(self, this_duration):
         
-        # breakpoint()
+        
         value = (this_duration - self.dur) / self._st_max_dur_for_chime * 10
         
         if value < 0:

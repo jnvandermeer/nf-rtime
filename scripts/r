@@ -19,6 +19,6 @@ pythonmodule=`echo $pythonmodule|sed s/\\\//./g`
 
 runcommand="ipython -m $pythonmodule $fname"
 echo $runcommand
-env PYTHONBREAKPOINT=pudb.set_trace bash -c "$runcommand"
-bash -c "$runcommand"
+env PYTHONBREAKPOINT=pudb_remote.set_trace bash -c "$runcommand"
+# bash -c "$runcommand"
 # bash --rcfile <(echo ". ~/.bashrc; $runcommand")
