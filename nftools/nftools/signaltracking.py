@@ -21,20 +21,35 @@ import numpy as np
 import sys
 sys.path.append("..") # Adds higher directory to python modules path.
 from callpyff import bcixml 
-
+import time
 
 
 
 
 
 class sending_to_nfstim(object):
-    def __init__(self, sampling_frequency, thr=1.0, dur=1.0, bcinet=None, chs=None, feedback_type='eeg', verbose=False, **kwargs):
+    def __init__(self, sampling_frequency, thr=1.0, dur=1.0, bcinet=None, chs=None, feedback_type='eeg', verbose=False, dt_between_sending_data=1/60., **kwargs):
         
         """
-        Set the threshold to use
-        Set the duration (above threshold) to use
+        This is quite heavily integrated with the neurofeedback stimulation stuff running on the stimulus computer.
+        the names of the variables are the same as over there, and you'd need to understand some of the 'gears' of
+        the stimulus to understand signals are passed and thay they mean.
+
+        The messages are basically all Pyff "Control" signals, which trigger a variety of things such as setting the 
+        threshold (for EEG or EMG), playing of a visual or auditory marker, or passing through a signal.
+
+        It seems rather overcomplicated to use an entire encoding of a Control Signal with an XML-like means.. and 
+        it is. This (as well as the pyff/psychopy in python2) will be one of the things that will be re-written,
+        once me (or someone else) can get to that.
+
+        Regarding Pyff, much is made of the Control and the Interaction signals. It is a bit of a horrible mess. 
+        Interaction signals are things that start/stop the stimulation, but if you carefully look at the signal
+        itself, they are no different - just a different location (interaction - 0, control - 1) in a dictionary.
+        Why no two different kinds of data streams for the two purposes? 
+
         
-        Then also give the bcinet object - so as to communicate with the nf-stim setup
+        Then also give the bcinet object - so as to communicate with the nf-stim setup.
+
         
         """
         
@@ -133,8 +148,10 @@ class sending_to_nfstim(object):
         self.set_stposition_upperoffset(self._st_upper_offset)
         # self.set_threshold(thr)
 
-
-        
+        # some lines to prevent sending so much data via the complicated XML/Control signal protocol
+        # that the stimulus computer would have problems keeping up
+        self.last_sent_time = time.time()
+        self.dt_between_sending_data = dt_between_sending_data  # default value is 60, usual screen refresh rate
         # self._initialized = False
     
     
@@ -170,11 +187,9 @@ class sending_to_nfstim(object):
 
 
     def send_data_signal(self, dat):
-        """ Sends the LAST sample to the stimulus setup (using appropriate scaling)
-            ... I can also take average, or median? It'd no use sending ALL
-            Data, since the line'll just get too big.
+        """ Sends a sample to the stimulus setup (using appropriate scaling)
+            best not to send every sample!
         """
-        
         
         this_signal = dat # np.mean(dat[:,:],1)
         to_send = np.median(this_signal)
@@ -182,12 +197,15 @@ class sending_to_nfstim(object):
         # change scalings - emg from 0 to 1; eeg from -1 to +1
         to_send_scaled = to_send / self._st_scaling + self._st_offset
         
-        
-        
-        if self.bcinet is not None:
-            self.bcinet.send_signal(bcixml.BciSignal({self.signal_key: to_send_scaled}, None, bcixml.CONTROL_SIGNAL))
-        else:
-            return to_send_scaled
+        # check how much time since the last send:
+        if time.time() - self.last_sent_time > self.dt_between_sending_data:
+            if self.bcinet is not None:
+                # send the actual signal. This is a horribly convoluted way of sending anything.
+                # also no point in abstractifying this mess in order to make it more pretty.
+                self.last_sent_time = time.time()
+                self.bcinet.send_signal(bcixml.BciSignal({self.signal_key: to_send_scaled}, None, bcixml.CONTROL_SIGNAL))
+
+        return to_send_scaled
         
 
 
@@ -366,7 +384,7 @@ class sending_to_nfstim(object):
         value = (this_duration - self.dur) / self._st_max_dur_for_chime * 10
         
         if value < 0:
-            print('it should never happen that a marker is sent when the length is smaller than needed')
+            print('it should never happen that a marker is sent when the length is smaller than needed: ' + str(value))
             
         if value > 10:
             value = 10
