@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=BCI_GUI
+Exec=bash -c 'cd /home/nfcontrol/nf/nf-rtime; ./start_openbciGUI.sh;$SHELL'
+Comment=Start RealTime
+Terminal=true
+Type=Application
