@@ -49,7 +49,7 @@ class sock(socket.socket):
         super(sock, self).__init__(*args)
         self.is_bound=False
         self.is_closed=False
-
+        self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._bind = socket.socket.bind
         self._close = socket.socket.close
 
