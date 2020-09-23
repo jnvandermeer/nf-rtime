@@ -230,6 +230,7 @@ class sending_to_nfstim(object):
             self.psarea = 0
             self.psduration = 0   # total time above threshold
             self.psareaduration = 0 # total time abovethreshold since LAST AUDIO STIMULUS!!
+            self.pprev_areaduration = 0 # also needs to do this one.
             
         if self.psduration == 0:
             self.signal_counter_sent=False
@@ -362,8 +363,7 @@ class sending_to_nfstim(object):
         """
         self._apply_offset_changes(self._st_lower_offset, offset)
         
-        
-        
+         
     def _apply_offset_changes(self, lower, higher):
         """ actually do the work
         """
@@ -384,7 +384,9 @@ class sending_to_nfstim(object):
         value = (this_duration - self.dur) / self._st_max_dur_for_chime * 10
         
         if value < 0:
+
             print('it should never happen that a marker is sent when the length is smaller than needed: ' + str(value))
+            # breakpoint()
             
         if value > 10:
             value = 10

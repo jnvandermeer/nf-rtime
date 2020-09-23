@@ -126,7 +126,7 @@ def determine_optimal_threshold(v, fs, dur, bursts_per_5min, make_plot=False):
     xopt = tmp.x
     
     
-    detected_bursts = detect_bursts(abs(hilbert(v)), 2*find_mode(v), 0.2*fs) # a list of onsets and durations (in sampless)
+    detected_bursts = detect_bursts(abs(hilbert(v)), thr*find_mode(v), dur*fs) # a list of onsets and durations (in sampless)
     
     if make_plot:
         plt.figure()
