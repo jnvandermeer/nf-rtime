@@ -49,7 +49,6 @@ class sending_to_nfstim(object):
 
         
         Then also give the bcinet object - so as to communicate with the nf-stim setup.
-
         
         """
         
@@ -61,7 +60,7 @@ class sending_to_nfstim(object):
             self.signal_key = 'nfsignalContainer'
             self.set_thr_key = 'thrContainer'
             
-            # so as to make the feedback go from 0 to 10 (5 units per lower/upper half)
+            # so as to make the feedback go from 0 to 10 (5 units per lower/upper half)\
             self._st_offset = -1
             self._st_scaling = 10
             
@@ -75,7 +74,10 @@ class sending_to_nfstim(object):
             self._st_scaling = 20
 
         if 'st_scaling' in kwargs.keys():
-            self._st_scaling=kwargs['st_scaling']        
+            self._st_scaling=kwargs['st_scaling']   
+            if self._st_scaling < 0:
+                 self._st_offset = 0
+                 print('training downregulation')
 
         self.fs = sampling_frequency
 
@@ -221,17 +223,31 @@ class sending_to_nfstim(object):
         self.TF = 0
         self.audioTF = 0
         
-        # is it bigger than 0?
-        if s > self.thr:
-            self.psarea += (s-self.thr) / self.fs
-            self.psduration += 1.0 / self.fs
-            self.psareaduration += 1.0 / self.fs
-        else:
-            self.psarea = 0
-            self.psduration = 0   # total time above threshold
-            self.psareaduration = 0 # total time abovethreshold since LAST AUDIO STIMULUS!!
-            self.pprev_areaduration = 0 # also needs to do this one.
-            
+        # to_check_thr =
+        if self._st_scaling < 0:
+            if s < self.thr:
+                self.psarea += abs(s-self.thr) / self.fs
+                self.psduration += 1.0 / self.fs
+                self.psareaduration += 1.0 / self.fs
+            else:
+                self.psarea = 0
+                self.psduration = 0   # total time above threshold
+                self.psareaduration = 0 # total time abovethreshold since LAST AUDIO STIMULUS!!
+                self.pprev_areaduration = 0 # also needs to do this one.
+        
+        if self._st_scaling > 0:
+            # is it bigger than 0?
+            if s > self.thr:
+                self.psarea += (s-self.thr) / self.fs
+                self.psduration += 1.0 / self.fs
+                self.psareaduration += 1.0 / self.fs
+            else:
+                self.psarea = 0
+                self.psduration = 0   # total time above threshold
+                self.psareaduration = 0 # total time abovethreshold since LAST AUDIO STIMULUS!!
+                self.pprev_areaduration = 0 # also needs to do this one.
+                
+                            
         if self.psduration == 0:
             self.signal_counter_sent=False
             
@@ -300,6 +316,9 @@ class sending_to_nfstim(object):
         
         if self.feedback_type == 'eeg':
             self._st_offset = -1 + self._st_lower_offset * 2.0
+            if new_scaling < 0:
+                self._st_offset = 0 + self._st_lower_offset * 2.0
+            
             self._st_scaling = new_scaling * 0.5 / (1 - self._st_lower_offset - self._st_upper_offset)
         elif self.feedback_type == 'emg':
             self._st_offset = 0 + self._st_lower_offset / 1.0

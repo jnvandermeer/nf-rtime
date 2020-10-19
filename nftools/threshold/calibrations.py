@@ -123,7 +123,7 @@ def detect_bursts(v, thr, dur):
     
 
 
-def determine_optimal_threshold(v, fs, dur, bursts_per_5min, make_plot=False):
+def determine_optimal_threshold(v, fs, dur, bursts_per_5min, make_plot=False, inverse_training=False):
     """ uses the mode as well as find_consecutive_regions to optimize the threshold to 
         coincide with a number of bursts to be expected per 5 minutes.
         
@@ -152,21 +152,39 @@ def determine_optimal_threshold(v, fs, dur, bursts_per_5min, make_plot=False):
     
     # pre-calculate to save computation time
     mode_v = find_mode(v)
+    
+    
     ahv = abs(hilbert(v))
+    #if inverse_training:
+    #    ahv = -1 * abs(hilbert(v))
     
     # how many bursts we need to have to fulfill criterion
+    # breakpoint()
     nbursts = len(v)/fs/60/5 * bursts_per_5min # we fit until we get 90 bursts
     
     # this is the function to minimize
-    model = lambda thr: abs(nbursts - len([(b, e-b) for b, e in contiguous_regions(ahv > thr*mode_v) if e-b > dur*fs ]))
+    #if inverse_training:
+    #    model = lambda thr: abs(nbursts - len([(b, e-b) for b, e in contiguous_regions(ahv >  thr*mode_v) if e-b > dur*fs ]))
+    #else:
+    if inverse_training:
+        model = lambda thr: abs(nbursts - len([(b, e-b) for b, e in contiguous_regions(-1*ahv > thr*mode_v) if e-b > dur*fs ]))
+    else:
+        model = lambda thr: abs(nbursts - len([(b, e-b) for b, e in contiguous_regions(ahv > thr*mode_v) if e-b > dur*fs ]))
     
     # optimize!
     # xopt, = fmin(model, 1, disp=0) # backwards search
-    tmp = scipy.optimize.minimize(model, 1, method="powell")
+    if inverse_training:
+        tmp = scipy.optimize.minimize(model, -1, method="powell")    
+    else:
+        tmp = scipy.optimize.minimize(model, 1, method="powell")
     xopt = tmp.x
     
     
-    detected_bursts = detect_bursts(abs(hilbert(v)), 2*find_mode(v), dur*fs) # a list of onsets and durations (in sampless)
+    if inverse_training:
+        detected_bursts = detect_bursts(-1*abs(hilbert(v)), -1*2*find_mode(v), dur*fs) # a list of onsets and durations (in sampless)
+    else:
+        detected_bursts = detect_bursts(abs(hilbert(v)), 2*find_mode(v), dur*fs) # a list of onsets and durations (in sampless)
+    
     
     if make_plot:
         plt.figure()
